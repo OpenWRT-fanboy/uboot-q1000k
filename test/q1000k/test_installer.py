@@ -35,6 +35,92 @@ def compile_model(tmp):
     return tmp / 'model'
 
 
+LV_MAIN = r'''
+int main(void) {
+    reset();
+    u8 original[0x40000];memcpy(original,env_bytes,sizeof(original));
+    struct q1000k_install_plan *plan=NULL;
+    assert(!q1000k_install_prepare(&plan,true));
+    assert(!event&&!write_enabled&&!gate_open_calls);
+    assert_env_preserved(original,plan->env_block);
+    assert_factory_pon(plan->factory);
+    q1000k_install_release(plan);
+
+    reset();memcpy(original,env_bytes,sizeof(original));
+    assert(!q1000k_install_prepare(&plan,true));
+    u8 image[0x40001];memset(image,0xa7,sizeof(image));
+    struct ubi_ec_hdr *old=(void*)ec_pages[0];memset(old,0,sizeof(*old));
+    old->magic=cpu_to_be32(UBI_EC_HDR_MAGIC);old->version=UBI_VERSION;
+    old->ec=cpu_to_be64(7);old->vid_hdr_offset=cpu_to_be32(4096);old->data_offset=cpu_to_be32(8192);
+    old->hdr_crc=cpu_to_be32(crc32_le(UBI_CRC32_INIT,(const u8*)old,UBI_EC_HDR_SIZE_CRC));
+    airoha_snand_set_write_enabled(true);
+    assert(!q1000k_install_commit(plan,image,sizeof(image),progress,NULL));
+    assert(raw_erases==4&&env_erases==1&&ubi_erases==1752);
+    assert(!memcmp(chain,image,sizeof(image)));
+    for(size_t i=sizeof(image);i<sizeof(chain);i++)assert(chain[i]==0xff);
+    assert_env_preserved(original,env_bytes);
+    for(int i=0;i<6;i++)assert(device.volumes[i]&&device.volumes[i]->vol_id==i);
+    assert(device.leb_size==253952);
+    assert(device.volumes[0]->usable_leb_size==253952&&device.volumes[0]->reserved_pebs==1);
+    assert(device.volumes[2]->vol_type==2&&device.volumes[2]->used_bytes==65536);
+    assert(!memcmp(device.volumes[2]->data,plan->factory,65536));
+    assert(layout_writes==2);
+    for(int i=0;i<1752;i++) {
+        struct ubi_ec_hdr *h=(void*)ec_pages[i];assert(q1000k_ec_valid(h));
+        assert(be64_to_cpu(h->ec)==8&&be32_to_cpu(h->vid_hdr_offset)==4096&&be32_to_cpu(h->data_offset)==8192);
+    }
+    q1000k_install_release(plan);airoha_snand_set_write_enabled(false);
+    assert(!q1000k_ubi_check_layout());
+    assert(device.ro_mode&&!ubi_devices[0]&&(part.flags&MTD_WRITEABLE));
+    puts("PASS: 4 KiB page/256 KiB erase geometry, 256 KiB environment and 253,952-byte LEB");
+    return 0;
+}
+'''
+
+
+def compile_lv_model(tmp):
+    code = (ROOT / 'test/q1000k/installer_harness.c').read_text()
+    code = code[:code.index('int main(int argc,char **argv) {')]
+    attach = (ROOT / 'test/q1000k/ubi_attach_harness.c').read_text()
+
+    attach = attach.replace('peb*0x20000+4096+off', 'peb*0x40000+8192+off')
+    attach = attach.replace(
+        'device.min_io_size=2048;device.vid_hdr_offset=2048;device.leb_start=4096;',
+        'device.min_io_size=4096;device.vid_hdr_offset=4096;device.leb_start=8192;')
+    attach = attach.replace('i*0x20000', 'i*0x40000')
+
+    def lv(text):
+        for old, new in [('0x6800', '0x10000'), ('0x20000', '0x40000'),
+                         ('2048', '4096'), ('0x6000', '0xc000'),
+                         ('126976', '253952'), ('3400', '1700'),
+                         ('3504', '1752'), ('0x220000', '0x240000'),
+                         ('0x1c000', '0x3c000')]:
+            text = re.sub(r'(?<![0-9a-fA-Fx])'+re.escape(old)+r'(?![0-9a-fA-F])',
+                          new, text)
+        return text
+
+    code = lv(code).replace('len==0xc000', 'len==0x7000')
+    code = code.replace('off==0x1e0c0000', 'off==0x1d740000')
+    attach = lv(attach)
+    source = re.sub(r'^#include .*\n', '', HEADER + '\n' + INSTALLER, flags=re.M)
+    code = code.replace('/* INSERT PRODUCTION CODE */', source)
+    io = (ROOT / 'drivers/mtd/ubi/io.c').read_text()
+    vtbl = (ROOT / 'drivers/mtd/ubi/vtbl.c').read_text()
+    validators = '\n'.join([function(io, 'validate_ec_hdr'),
+                            function(io, 'validate_vid_hdr'),
+                            function(vtbl, 'vtbl_check'),
+                            function(vtbl, 'process_lvol'),
+                            function(vtbl, 'ubi_read_volume_table')])
+    attach = attach.replace('/* INSERT REAL UBI FUNCTIONS */', validators)
+    code = code.replace('/* INSERT UBI ATTACH VALIDATORS */', attach) + LV_MAIN
+    (tmp / 'model.c').write_text(code)
+    subprocess.run(['cc', '-std=gnu11', '-g', '-Wall', '-Werror',
+                    '-Wno-unused-function', '-Wno-sign-compare', '-fsanitize=undefined',
+                    '-I'+str(ROOT/'test/q1000k'),
+                    str(tmp / 'model.c'), '-lz', '-o', str(tmp / 'model')], check=True)
+    return tmp / 'model'
+
+
 class Installer(unittest.TestCase):
     def test_nand_ubi_model(self):
         with tempfile.TemporaryDirectory(prefix='q1000k-installer-') as tmp:
@@ -43,6 +129,11 @@ class Installer(unittest.TestCase):
             backup = os.environ.get('Q1000K_TEST_BACKUP')
             if backup:
                 subprocess.run([str(exe), backup], check=True)
+
+    def test_lv_geometry_model(self):
+        with tempfile.TemporaryDirectory(prefix='q1000k-installer-lv-') as tmp:
+            exe = compile_lv_model(Path(tmp))
+            subprocess.run([str(exe)], check=True)
 
     def test_readonly_and_write_boundaries(self):
         boot = function(INSTALLER, 'do_q1000k_boot')

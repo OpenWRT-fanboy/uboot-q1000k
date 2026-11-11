@@ -24,6 +24,8 @@ The W1700K **complete installation procedure** has two parts. Vendor-console com
 ## W1700K UBI structure
 
 With the observed 128 KiB eraseblocks and 2 KiB pages, each LEB is 126,976 bytes.
+A 4 KiB-page/256 KiB-erase variant uses 253,952-byte LEBs; the Q1000K
+installer derives the LEB size from the detected geometry.
 
 | Volume ID | Name | Type | Requested size / content |
 |---:|---|---|---|
@@ -47,7 +49,7 @@ The inspected NAND data-area backup is 536,870,912 bytes; SHA-256:
 
 - The vendor environment at `0x200000` has a 4-byte little-endian CRC32 followed by NUL-separated variables in a **16 KiB** record. Its CRC validates. There is one valid record in the 2 MiB environment partition; it is not a redundant UBI environment. The rest of its first 128 KiB eraseblock is erased.
 - The original `bootcmd` is `flash imgread 2048;bootm`. A direct chainloader command must explicitly read the 1 MiB slot and use the RAM address verified on this board, `0x89000000`.
-- The valid 250-entry factory BBT is at `0x1e0c0000`, and the valid 250-entry BMT is at `0x1ffe0000`. Both are version 1 with **zero entries**. For this state, raw physical offsets and vendor logical offsets coincide. A writer must recheck this on the live device and refuse unsupported mappings; skipping bad blocks alone is not equivalent to vendor remapping.
+- The valid 250-entry factory BBT is at `0x1e0c0000`, and the valid 250-entry BMT is at `0x1ffe0000`. Both are version 1 with **zero entries**. For this state, raw physical offsets and vendor logical offsets coincide. The installer never writes the reserved region, so it does not depend on these tables' contents or location; it only refuses bad blocks in the raw boot area, where identity mapping is required. Skipping bad blocks alone is not equivalent to vendor remapping.
 - The user confirmed that Q1000K has neither Wi-Fi nor a fan. Create the same **64 KiB static factory** record, copying DSD WAN/LAN MACs and serial to the reference offsets while leaving EEPROM/fan fields zero. Q1000K additions copy the 12-byte FSAN plus NUL at `0x9000`, GPON calibration at `0xa000`, and XGS-PON calibration at `0xb000`; both calibration records are exactly 513 bytes from DSD offsets `0x11000`/`0x12000`. Preserve DSD and ART in place. See [PON data details](q1000k-pon-data.md).
 - Preserve Q1000K’s **438 MiB** UBI range, `0x00700000` through `0x1bcfffff`, ART at `0x1bd00000..0x1bffffff`, and BMT reservation at `0x1c000000..0x1fffffff`. The local W1700K/master 439 MiB boundary would erase the first MiB of Q1000K ART. Older W1700K layouts are larger still.
 - Preserve all unrelated vendor environment variables, and update `bootcmd` only after chainloader read-back verification and successful UBI preparation. This improves on the reference README’s environment-before-image order. A single-copy NAND environment cannot offer atomic, power-loss-proof replacement.
@@ -61,7 +63,7 @@ The PR’s example boot command reads `0x1000000` bytes (16 MiB), while the inst
 - The two-step choice leaves one-LEB **empty placeholders** for recovery and fit. Separate validated uploads populate these volumes. The final logical structure matches the W1700K layout; the first step alone does not install OpenWrt.
 - Firmware uploads replace fit and reset rootfs_data, preserving env/factory/recovery. Recovery uploads replace recovery and reset rootfs_data, preserving env/factory/fit. Both use all remaining space for the overlay, with no XG size cap.
 - Startup settings stay in RAM despite the two compatible UBI environment volumes. Installed boot uses read-only UBI, tries fit then recovery, then falls back to HTTP; Reset forces HTTP.
-- Runtime preflight supports the verified empty-table format only, scans for additional/relocated tables and environment copies, and refuses incompatible mappings or raw boot bad blocks. It never updates vendor BBT/BMT. A single-copy vendor environment and the overall multi-stage conversion are not power-loss atomic.
+- Runtime preflight checks the raw boot area for bad blocks and the environment partition for additional copies; reserved-region BBT/BMT contents are ignored because that region is never written. It never updates vendor BBT/BMT. A single-copy vendor environment and the overall multi-stage conversion are not power-loss atomic.
 - Both upload targets reject old vendor-layout Q1000K images. The September 9 recovery FIT found in Downloads has tclinux/tclinux_slave/system partitions, not the fixed UBI partition, and is correctly rejected. Rebuild recovery and sysupgrade from the Q1000K UBI device profile.
 
 Host tests cover the controller gate/ACK policy, raw and UBI write boundaries, failure ordering, factory migration using the actual backup, retry after incomplete updates, and FIT roles/layouts. The first user installation exposed missing UBI layout-volume metadata after EC-header formatting. The formatter now writes and verifies both empty volume-table copies before attachment, matching the required `ubiformat` behavior. Tests use U-Boot's actual header validators and table reader to reproduce that failure and check the correction; full UBI runtime and hardware installation remain to be verified.

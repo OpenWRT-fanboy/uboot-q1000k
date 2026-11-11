@@ -6,7 +6,9 @@ Quantum Fiber Q1000K
 The Q1000K is an Airoha AN7581 optical network terminal with 512 MiB DRAM and a
 512 MiB SPI-NAND. This port is a second-stage U-Boot chainloader: the stock
 vendor first stage remains in place and loads the chainloader from the 1 MiB
-window at logical offset ``0x00600000``.
+window at logical offset ``0x00600000``. Both the 2 KiB-page/128 KiB-erase
+and 4 KiB-page/256 KiB-erase Winbond variants are supported; the installer
+derives the page, eraseblock and UBI LEB sizes from the detected chip.
 
 Building
 --------
@@ -106,7 +108,7 @@ this configured target without scanning or attaching the current UBI data.
 
 The chainloader and vendor partitions remain read-only through ordinary MTD
 partition access. The installer uses narrowly bounded raw-device writes after
-checking the live NAND geometry, vendor environment and BBT/BMT tables.
+checking the live NAND geometry, vendor environment and raw boot bad blocks.
 
 Installation and UBI volumes
 ---------------------------
@@ -129,10 +131,10 @@ using the Q1000K ART boundary and the user's two-step installation flow.
 
 The default **Update U-Boot only (keep UBI)** option replaces and verifies only
 the 1 MiB chainloader slot at ``0x600000``. It validates the uploaded FIT and
-checks NAND geometry, boot-region bad blocks and vendor BBT/BMT mapping before
-writing. It does not attach or format UBI, migrate factory data, or modify the
-vendor environment. All existing UBI volumes and the vendor boot command are
-preserved. First-time installation still requires the explicit installer
+checks NAND geometry and boot-region bad blocks before writing. It does not
+attach or format UBI, migrate factory data, or modify the vendor environment.
+All existing UBI volumes and the vendor boot command are preserved. First-time
+installation still requires the explicit installer
 option below. Both operations reboot after successful verification.
 
 Update-only uses ``/upload/uboot-only``; the full installer retains
@@ -145,7 +147,7 @@ and can run only after validation and acknowledgement of its POST response.
 * Validate the complete two-image Q1000K FIT, all payload hashes, load/entry
   addresses, the UBI boundary and the ``q1000k,installer-version = <1>`` marker.
   Old chainloaders without installer/installed-boot support are rejected.
-* Check the live 512 MiB NAND geometry, identity BBT/BMT mapping, CRC-valid
+* Check the live 512 MiB NAND geometry, boot-region bad blocks, CRC-valid
   16 KiB vendor environment, DSD MAC/serial/FSAN fields and both PON calibration
   records, without writes.
 * Erase the 1 MiB chainloader slot at ``0x600000``, write the FIT at offset
@@ -156,7 +158,8 @@ and can run only after validation and acknowledgement of its POST response.
   volume table, with their VID headers, in separate good eraseblocks before
   attaching UBI. Create the volumes below and write/verify factory.
 * Detach UBI, replace only vendor ``bootcmd`` in a read-modify-write of its
-  first 128 KiB eraseblock at ``0x200000``, recompute its CRC and verify it.
+  first eraseblock at ``0x200000`` (128 KiB or 256 KiB, matching the NAND),
+  recompute its CRC and verify it.
   The command is ``flash read 0x600000 0x100000 0x89000000; bootm 0x89000000``.
 * Close the NAND write gate and reboot after success. Errors stop the operation
   and close the gate; the serial console reports the failing stage.
@@ -174,8 +177,8 @@ firmware for the next boot.
 == ============ ======= =====================================================
 ID Volume       Type    Content / requested size
 == ============ ======= =====================================================
-0  ubootenv     dynamic 126,976 bytes (one LEB), initially empty
-1  ubootenv2    dynamic 126,976 bytes (one LEB), initially empty
+0  ubootenv     dynamic One LEB (126,976 or 253,952 bytes), initially empty
+1  ubootenv2    dynamic One LEB (126,976 or 253,952 bytes), initially empty
 2  factory      static  65,536 bytes
 3  recovery     dynamic One empty LEB; resized to the recovery FIT on upload
 4  fit          dynamic One empty LEB; resized to the sysupgrade FIT on upload
@@ -218,11 +221,14 @@ Interrupted target uploads can be retried even if the target or overlay is
 missing or the target's update marker is set. An unrelated/unsupported UBI
 layout is rejected; ordinary firmware uploads do not format the whole partition.
 
-The supported vendor environment and mapping format was verified against the
-user's backup: one 16 KiB CRC32 record, an empty 250-entry v1 BBT at
-``0x1e0c0000`` and an empty 250-entry v1 BMT at ``0x1ffe0000``. Additional or
-relocated tables, nonempty mappings, bad raw boot blocks or additional
-CRC-valid environment records cause preflight to refuse installation.
+The vendor BBT/BMT tables live in the reserved BMT/BBT region, which this
+installer never writes. Their contents therefore do not affect the raw boot or
+UBI areas: preflight only rejects bad blocks in the raw boot area, and UBI
+handles bad blocks inside its own partition. The backup confirmed empty v1
+tables at ``0x1e0c0000`` and ``0x1ffe0000``, but a different NAND geometry may
+place them elsewhere; that no longer blocks installation. Additional CRC-valid
+environment records in the 2 MiB environment partition still cause preflight to
+refuse installation.
 The single-copy vendor environment cannot be replaced atomically against
 power loss. Bootcmd is written last, but a power interruption during its
 replacement can require vendor-console recovery. Earlier failures also leave

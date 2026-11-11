@@ -1475,6 +1475,7 @@ static const char *recovery_default_target(enum upload_target tgt)
 	case TARGET_RECOVERY:
 		return "recovery";
 	case TARGET_FIRMWARE:
+	case TARGET_INITRAMFS:
 		return "fit";
 	case TARGET_UBOOT:
 		return "uboot";
@@ -1489,6 +1490,7 @@ static const char *recovery_target_env(enum upload_target tgt)
 	case TARGET_RECOVERY:
 		return NULL;
 	case TARGET_FIRMWARE:
+	case TARGET_INITRAMFS:
 		return "recovery_mtd";
 	case TARGET_UBOOT:
 		return "recovery_mtd_uboot";
@@ -1503,6 +1505,7 @@ static const char *recovery_raw_env(enum upload_target tgt)
 	case TARGET_RECOVERY:
 		return NULL;
 	case TARGET_FIRMWARE:
+	case TARGET_INITRAMFS:
 		return "recovery_dev";
 	case TARGET_UBOOT:
 		return "recovery_dev_uboot";
@@ -1517,6 +1520,7 @@ static const char *recovery_size_env(enum upload_target tgt)
 	case TARGET_RECOVERY:
 		return NULL;
 	case TARGET_FIRMWARE:
+	case TARGET_INITRAMFS:
 		return "recovery_size";
 	case TARGET_UBOOT:
 		return "recovery_size_uboot";
@@ -1531,6 +1535,7 @@ static ulong recovery_raw_offset(enum upload_target tgt)
 	case TARGET_RECOVERY:
 		return 0;
 	case TARGET_FIRMWARE:
+	case TARGET_INITRAMFS:
 		return env_get_hex("recovery_ofs", 0x050000);
 	case TARGET_UBOOT:
 		return env_get_hex("uboot_ofs",
@@ -1756,6 +1761,10 @@ static int recovery_resolve_target(enum upload_target tgt,
 
 	memset(target, 0, sizeof(*target));
 
+	/* RAM boot never resolves a flash target. */
+	if (tgt == TARGET_INITRAMFS)
+		return -EOPNOTSUPP;
+
 	if (recovery_board_is_q1000k())
 		return recovery_q1000k_target(tgt, target);
 	if (tgt == TARGET_RECOVERY)
@@ -1825,6 +1834,8 @@ static int recovery_resolve_target(enum upload_target tgt,
 			if (!raw)
 				raw = "nor0";
 			break;
+		case TARGET_INITRAMFS:
+			return -EOPNOTSUPP;
 		}
 	}
 

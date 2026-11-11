@@ -258,16 +258,14 @@ int main(int argc,char **argv) {
     bool changed=true;assert(!q1000k_rewrite_env(plan->env_block,&changed)&&!changed);
     q1000k_install_release(plan);
     if(argc==2){puts("PASS: real backup environment, empty BBT/BMT, FSAN and both PON calibration copies in 64 KiB factory (read-only)");return 0;}
-    for(int fault=0;fault<8;fault++) {
+    for(int fault=0;fault<6;fault++) {
         reset();
-        if(fault==0)bbt[12]=1;
-        if(fault==1)bmt[5]=1;
-        if(fault==2)env_bytes[99]^=1;
-        if(fault==3)dsd[8]='z';
-        if(fault==4)bad_block=48;
-        if(fault==5)part.offset=0;
-        if(fault==6)raw.subpage_sft=1;
-        if(fault==7)memcpy(env_bytes+0x4000,env_bytes,0x4000);
+        if(fault==0)env_bytes[99]^=1;
+        if(fault==1)dsd[8]='z';
+        if(fault==2)bad_block=48;
+        if(fault==3)part.offset=0;
+        if(fault==4)raw.subpage_sft=1;
+        if(fault==5)memcpy(env_bytes+0x4000,env_bytes,0x4000);
         assert(q1000k_install_prepare(&plan, true));assert(!plan&&!event&&!write_enabled);
     }
     /* Reject incomplete/ambiguous PON data while NAND is still read-only. */
@@ -382,12 +380,14 @@ int main(int argc,char **argv) {
         assert(!memcmp(original,env_bytes,sizeof(original)));
         q1000k_install_release(plan);
     }
-    /* Slot-only preflight still refuses unsupported mapping and bad boot blocks. */
-    for(int failure=0;failure<2;failure++) {
-        reset();if(failure)bad_block=0x600000/0x20000;else bmt[5]=1;
-        assert(q1000k_install_prepare(&plan,false));
-        assert(!plan&&!event&&!write_enabled&&!ubi_attach_calls);
-    }
+    /* Reserved-region BBT/BMT contents are ignored; bad boot blocks still abort. */
+    reset();bbt[12]=1;bmt[5]=1;
+    assert(!q1000k_install_prepare(&plan,false));
+    assert(plan&&!event&&!write_enabled&&!ubi_attach_calls);
+    q1000k_install_release(plan);
+    reset();bad_block=0x600000/0x20000;
+    assert(q1000k_install_prepare(&plan,false));
+    assert(!plan&&!event&&!write_enabled&&!ubi_attach_calls);
     /* Failures before vendor-env commit never select an unverified chainloader. */
     const int failures[]={1,2,6,12,100,7019,7020,7021,7022,7023,7024,7025,7026,7027,7028,7029};
     for(size_t f=0;f<ARRAY_SIZE(failures);f++) {

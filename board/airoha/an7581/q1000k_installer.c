@@ -36,6 +36,28 @@ static int q1000k_read(struct mtd_info *mtd, loff_t off, void *buf, size_t len)
 	return 0;
 }
 
+/* Winbond W25N04KV/LV use 64 pages per eraseblock with 2 KiB/4 KiB pages. */
+static bool q1000k_geometry_valid(const struct mtd_info *raw)
+{
+	if (raw->size != Q1000K_NAND_SIZE || raw->subpage_sft)
+		return false;
+	if ((raw->writesize != Q1000K_PAGE_SIZE &&
+	     raw->writesize != 2 * Q1000K_PAGE_SIZE) ||
+	    raw->erasesize != 64 * raw->writesize)
+		return false;
+	return !(Q1000K_ENV_OFFSET % raw->erasesize) &&
+	       !(Q1000K_CHAIN_OFFSET % raw->erasesize) &&
+	       !(Q1000K_CHAIN_SIZE % raw->erasesize) &&
+	       !(Q1000K_DSD_OFFSET % raw->erasesize) &&
+	       !(Q1000K_UBI_OFFSET % raw->erasesize) &&
+	       !(Q1000K_UBI_SIZE % raw->erasesize);
+}
+
+static int q1000k_leb_size(const struct mtd_info *raw)
+{
+	return raw->erasesize - 2 * raw->writesize;
+}
+
 static int q1000k_get_mtd(struct mtd_info **rawp, struct mtd_info **ubip)
 {
 	struct mtd_info *raw, *ubi;
@@ -49,9 +71,7 @@ static int q1000k_get_mtd(struct mtd_info **rawp, struct mtd_info **ubip)
 		put_mtd_device(raw);
 		return -ENODEV;
 	}
-	if (raw->parent || raw->size != Q1000K_NAND_SIZE ||
-	    raw->erasesize != Q1000K_ERASE_SIZE ||
-	    raw->writesize != Q1000K_PAGE_SIZE || raw->subpage_sft ||
+	if (raw->parent || !q1000k_geometry_valid(raw) ||
 	    ubi->parent != raw || ubi->offset != Q1000K_UBI_OFFSET ||
 	    ubi->size != Q1000K_UBI_SIZE) {
 		put_mtd_device(ubi);
@@ -63,60 +83,17 @@ static int q1000k_get_mtd(struct mtd_info **rawp, struct mtd_info **ubip)
 	return 0;
 }
 
-/* The backup establishes 250-entry v1 tables, both empty. Never rebuild them. */
-static int q1000k_empty_mapping_table(const u8 *data, bool bbt)
-{
-	size_t header = bbt ? 12 : 20;
-	size_t bytes = bbt ? 500 : 1000;
-	size_t i;
-
-	if (bbt) {
-		if (memcmp(data, "RAWB", 4) || get_unaligned_le32(data + 4) != 1 ||
-		    data[8] != 1 || data[9])
-			return -EOPNOTSUPP;
-	} else if (memcmp(data, "BMT", 3) || data[3] != 1 ||
-		   data[5] || data[6] != 1) {
-		return -EOPNOTSUPP;
-	}
-	for (i = 0; i < bytes; i++)
-		if (data[header + i])
-			return -EOPNOTSUPP;
-	return 0;
-}
-
 static int q1000k_check_mapping(struct mtd_info *raw)
 {
-	const loff_t offsets[] = { 0x1e0c0000, 0x1ffe0000 };
-	u8 *page = malloc_cache_aligned(Q1000K_PAGE_SIZE);
-	int ret = -ENOMEM;
 	loff_t off;
+	int ret;
 
-	if (!page)
-		return ret;
-	/* Reject relocated or additional table copies, including stale copies. */
-	for (off = 0x1c000000; off < raw->size; off += raw->erasesize) {
-		ret = mtd_block_isbad(raw, off);
-		if (ret < 0)
-			goto out;
-		if (ret) {
-			if (off == offsets[0] || off == offsets[1]) {
-				ret = -EIO;
-				goto out;
-			}
-			continue;
-		}
-		ret = q1000k_read(raw, off, page, Q1000K_PAGE_SIZE);
-		if (ret)
-			goto out;
-		if (off == offsets[0] || off == offsets[1]) {
-			ret = q1000k_empty_mapping_table(page, off == offsets[0]);
-		} else if (!memcmp(page, "RAWB", 4) || !memcmp(page, "BMT", 3)) {
-			ret = -EOPNOTSUPP;
-		}
-		if (ret)
-			goto out;
-	}
-	/* A new bad block before the slot also invalidates identity mapping. */
+	/*
+	 * The vendor BBT/BMT live in the reserved region, which this installer
+	 * never writes. Their contents do not affect the raw boot or UBI areas;
+	 * only a bad block in the raw boot area prevents identity mapping there.
+	 * UBI handles bad blocks inside its own partition.
+	 */
 	for (off = 0; off < Q1000K_UBI_OFFSET; off += raw->erasesize) {
 		ret = mtd_block_isbad(raw, off);
 		if (ret) {
@@ -124,10 +101,9 @@ static int q1000k_check_mapping(struct mtd_info *raw)
 			goto out;
 		}
 	}
+	return 0;
 out:
-	free(page);
-	if (ret)
-		puts("Q1000K: unsupported BBT/BMT or bad raw boot block; no installation writes\n");
+	puts("Q1000K: bad raw boot block; no installation writes\n");
 	return ret;
 }
 
@@ -332,8 +308,11 @@ static int q1000k_check_env_copies(struct mtd_info *raw, u8 *scratch)
 		if (ret)
 			return ret;
 		if (get_unaligned_le32(scratch) ==
-		    q1000k_env_crc(scratch + 4, Q1000K_ENV_SIZE - 4))
+		    q1000k_env_crc(scratch + 4, Q1000K_ENV_SIZE - 4)) {
+			printf("Q1000K: additional CRC-valid environment at 0x%lx\n",
+			       (unsigned long)off);
 			return -EOPNOTSUPP;
+		}
 	}
 	return 0;
 }
@@ -359,7 +338,7 @@ int q1000k_install_prepare(struct q1000k_install_plan **out, bool prepare_ubi)
 		*out = plan;
 		return 0;
 	}
-	plan->env_block = malloc_cache_aligned(Q1000K_ERASE_SIZE);
+	plan->env_block = malloc_cache_aligned(plan->raw->erasesize);
 	plan->factory = malloc_cache_aligned(Q1000K_FACTORY_SIZE);
 	dsd = malloc_cache_aligned(0x4000);
 	if (!plan->env_block || !plan->factory || !dsd) {
@@ -369,7 +348,7 @@ int q1000k_install_prepare(struct q1000k_install_plan **out, bool prepare_ubi)
 	ret = q1000k_check_env_copies(plan->raw, dsd);
 	if (!ret)
 		ret = q1000k_read(plan->raw, Q1000K_ENV_OFFSET, plan->env_block,
-				    Q1000K_ERASE_SIZE);
+				    plan->raw->erasesize);
 	if (!ret)
 		ret = q1000k_rewrite_env(plan->env_block, &plan->env_changed);
 	if (!ret)
@@ -383,6 +362,10 @@ int q1000k_install_prepare(struct q1000k_install_plan **out, bool prepare_ubi)
 	return 0;
 fail:
 	printf("Q1000K installer preflight failed: %d; no installation writes\n", ret);
+	if (plan->raw)
+		printf("Q1000K: NAND page %u erase %u subpage %u LEB %d\n",
+		       plan->raw->writesize, plan->raw->erasesize,
+		       plan->raw->subpage_sft, q1000k_leb_size(plan->raw));
 	free(dsd);
 	q1000k_install_release(plan);
 	return ret;
@@ -402,7 +385,7 @@ static int q1000k_write_boot_region(struct mtd_info *raw, loff_t offset,
 		goto out;
 	if (!size || size > span ||
 	    !((offset == Q1000K_CHAIN_OFFSET && span == Q1000K_CHAIN_SIZE) ||
-	      (offset == Q1000K_ENV_OFFSET && span == Q1000K_ERASE_SIZE))) {
+	      (offset == Q1000K_ENV_OFFSET && span == raw->erasesize))) {
 		ret = -EPERM;
 		goto out;
 	}
@@ -652,18 +635,22 @@ int q1000k_install_commit(struct q1000k_install_plan *plan, const void *image,
 	puts("Q1000K: formatting fixed UBI partition\n");
 	ret = q1000k_format_ubi(plan->ubi, progress, ctx);
 	if (!ret)
-		ret = ubi_create_vol("ubootenv", Q1000K_LEB_SIZE, true, 0, false);
+		ret = ubi_create_vol("ubootenv", q1000k_leb_size(plan->raw),
+				     true, 0, false);
 	if (!ret)
-		ret = ubi_create_vol("ubootenv2", Q1000K_LEB_SIZE, true, 1, false);
+		ret = ubi_create_vol("ubootenv2", q1000k_leb_size(plan->raw),
+				     true, 1, false);
 	if (!ret)
 		ret = ubi_create_vol("factory", Q1000K_FACTORY_SIZE, false, 2, false);
 	if (!ret)
 		ret = q1000k_ubi_write_verify("factory", plan->factory,
 					     Q1000K_FACTORY_SIZE, progress, ctx);
 	if (!ret)
-		ret = ubi_create_vol("recovery", Q1000K_LEB_SIZE, true, 3, false);
+		ret = ubi_create_vol("recovery", q1000k_leb_size(plan->raw),
+				     true, 3, false);
 	if (!ret)
-		ret = ubi_create_vol("fit", Q1000K_LEB_SIZE, true, 4, false);
+		ret = ubi_create_vol("fit", q1000k_leb_size(plan->raw),
+				     true, 4, false);
 	if (!ret)
 		ret = ubi_create_vol("rootfs_data", -1, true, 5, false);
 	/* Finish all UBI cleanup before modifying the vendor boot selector. */
@@ -673,7 +660,8 @@ int q1000k_install_commit(struct q1000k_install_plan *plan, const void *image,
 	if (plan->env_changed) {
 		puts("Q1000K: updating and verifying vendor bootcmd\n");
 		ret = q1000k_write_boot_region(plan->raw, Q1000K_ENV_OFFSET,
-			plan->env_block, Q1000K_ERASE_SIZE, Q1000K_ERASE_SIZE, progress, ctx);
+			plan->env_block, plan->raw->erasesize,
+			plan->raw->erasesize, progress, ctx);
 	}
 	return ret;
 }
@@ -696,13 +684,13 @@ static int q1000k_attach_readonly(void)
 	return ret;
 }
 
-static int q1000k_check_volumes(void)
+static int q1000k_check_volumes(int leb_size)
 {
 	const char *names[] = { "ubootenv", "ubootenv2", "factory", "recovery", "fit", "rootfs_data" };
 	struct ubi_device *ubi = ubi_devices[0];
 	int i;
 
-	if (!ubi || ubi->leb_size != Q1000K_LEB_SIZE)
+	if (!ubi || ubi->leb_size != leb_size)
 		return -EINVAL;
 	for (i = 0; i < ubi->vtbl_slots; i++) {
 		struct ubi_volume *vol = ubi->volumes[i];
@@ -715,7 +703,7 @@ static int q1000k_check_volumes(void)
 		if (i >= ARRAY_SIZE(names) || strcmp(vol->name, names[i]) ||
 		    vol->vol_id != i ||
 		    vol->vol_type != (i == 2 ? UBI_STATIC_VOLUME : UBI_DYNAMIC_VOLUME) ||
-		    vol->usable_leb_size != Q1000K_LEB_SIZE ||
+		    vol->usable_leb_size != leb_size ||
 		    (i < 3 && (vol->reserved_pebs != 1 || vol->upd_marker || vol->corrupted)) ||
 		    (i == 2 && vol->used_bytes != Q1000K_FACTORY_SIZE))
 			return -EINVAL;
@@ -726,10 +714,18 @@ static int q1000k_check_volumes(void)
 
 int q1000k_ubi_check_layout(void)
 {
-	int ret = q1000k_attach_readonly();
+	struct mtd_info *raw, *mtd;
+	int leb_size = 0;
+	int ret = q1000k_get_mtd(&raw, &mtd);
 
+	if (!ret) {
+		leb_size = q1000k_leb_size(raw);
+		put_mtd_device(mtd);
+		put_mtd_device(raw);
+		ret = q1000k_attach_readonly();
+	}
 	if (!ret)
-		ret = q1000k_check_volumes();
+		ret = q1000k_check_volumes(leb_size);
 	ubi_detach();
 	if (ret)
 		puts("Q1000K: choose Install U-Boot and Prepare UBI first\n");
@@ -739,9 +735,10 @@ int q1000k_ubi_check_layout(void)
 int q1000k_ubi_upload(const char *name, const void *image, size_t size,
 		     q1000k_progress_fn progress, void *ctx)
 {
+	struct mtd_info *raw, *mtd;
 	struct ubi_device *ubi;
 	struct ubi_volume *vol, *overlay;
-	int id, ret;
+	int id, ret, leb_size;
 	u64 capacity;
 
 	if (!name || !image || !size || !progress)
@@ -752,10 +749,16 @@ int q1000k_ubi_upload(const char *name, const void *image, size_t size,
 		id = 3;
 	else
 		return -EINVAL;
+	ret = q1000k_get_mtd(&raw, &mtd);
+	if (ret)
+		return ret;
+	leb_size = q1000k_leb_size(raw);
+	put_mtd_device(mtd);
+	put_mtd_device(raw);
 	ret = ubi_part("ubi", NULL);
 	if (ret)
 		return ret;
-	ret = q1000k_check_volumes();
+	ret = q1000k_check_volumes(leb_size);
 	if (ret)
 		goto out;
 	vol = ubi_find_volume(name);
