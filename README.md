@@ -21,7 +21,7 @@ and must be a bare FIT at file offset zero. Do not flash `u-boot.bin`,
 
 - `q1000k_defconfig` for the AN7581-based Q1000K.
 - A RAM-bootable FIT containing the raw U-Boot payload and matching Q1000K DTB.
-- HTTP recovery at `http://192.168.255.1` after the chainloader starts.
+- HTTP recovery at `http://192.168.1.1` after the chainloader starts.
 - Separate Q1000K firmware, recovery-image, and chainloader update flows.
 - Temporary HTTP boot of Q1000K OpenWrt initramfs FIT images from RAM.
 - A guarded, explicit first-install operation that prepares the fixed UBI
@@ -94,7 +94,7 @@ or command from another router model.
 
 ## HTTP recovery and installation
 
-After a validated chainloader starts, open `http://192.168.255.1` from a PC
+After a validated chainloader starts, open `http://192.168.1.1` from a PC
 connected to the recovery port. The recovery page distinguishes these actions:
 
 - **Firmware Recovery** accepts a Q1000K `*-sysupgrade.itb`, replaces `fit`
@@ -132,7 +132,7 @@ flash. Firmware and recovery-image flashing continue to stage at `0x84000000`.
 After validation and acknowledgement of the upload response, recovery stops
 HTTP, DHCP and Ethernet, then boots Linux. The page shows **Boot requested**;
 follow the serial console for the actual boot result. Linux uses the network
-configuration in the initramfs, which may differ from `192.168.255.1`.
+configuration in the initramfs, which may differ from `192.168.1.1`.
 Restarting returns to the existing boot setup. The running Linux image controls
 its own storage access; the bootloader's NAND write guard does not protect
 against writes performed by Linux.

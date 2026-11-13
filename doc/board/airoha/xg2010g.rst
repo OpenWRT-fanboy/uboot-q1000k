@@ -57,7 +57,7 @@ chainloader path reads the FIT header at logical offset ``0`` and loads only
 the FIT's declared total size.
 
 Holding reset (GPIO 0, active low) during U-Boot startup enters HTTP recovery
-at ``http://192.168.255.1``. Firmware recovery accepts an OpenWrt FIT image,
+at ``http://192.168.1.1``. Firmware recovery accepts an OpenWrt FIT image,
 recreates the fixed 438 MiB UBI layout, writes the image to ``ubi:fit`` and
 creates ``rootfs_data`` from the remaining space. The erase range is strictly
 ``0x00700000..0x1bd00000``; DSD, ART and BMT/BBT data remain untouched.

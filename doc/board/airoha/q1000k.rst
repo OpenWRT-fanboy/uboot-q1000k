@@ -118,7 +118,7 @@ Q1000K follows the W1700K volume IDs, types and environment/factory sizes,
 using the Q1000K ART boundary and the user's two-step installation flow.
 
 1. RAM-boot the newly built ``q1000k-chainload-uboot.itb``. Before installation,
-   it opens HTTP recovery at ``http://192.168.255.1``.
+   it opens HTTP recovery at ``http://192.168.1.1``.
 2. Open **Update U-Boot**, set **U-Boot operation** to **Install U-Boot and
    prepare UBI**, select that same installer-capable FIT, and click
    **Install U-Boot and Prepare UBI**. Confirm that the existing UBI firmware,

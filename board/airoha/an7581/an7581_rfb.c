@@ -933,7 +933,7 @@ int board_late_init(void)
 	}
 
 	printf("Recovery button detected, starting web recovery...\n");
-	env_set("ipaddr", "192.168.255.1");
+	env_set("ipaddr", "192.168.1.1");
 	env_set("netmask", "255.255.255.0");
 	env_set("gatewayip", "0.0.0.0");
 

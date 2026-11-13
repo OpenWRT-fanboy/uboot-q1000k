@@ -78,7 +78,7 @@ config HTTPD_RECOVERY
 	select PROT_TCP_LWIP
 	help
 	  Build a minimal HTTP upload recovery server that listens on
-	  192.168.255.1 and flashes uploaded images to MTD partitions or
+	  192.168.1.1 and flashes uploaded images to MTD partitions or
 	  UBI volumes selected through recovery_* environment variables.
 
 config Q1000K_INSTALLER

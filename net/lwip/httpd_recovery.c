@@ -69,11 +69,11 @@ ulong airoha_recovery_get_lan_activity_ms(void);
 
 /* Delay before reboot after flashing completes, to let browser finish reads */
 #define REBOOT_DELAY_MS        3000
-#define RECOVERY_STATIC_IPADDR           "192.168.255.1"
+#define RECOVERY_STATIC_IPADDR           "192.168.1.1"
 #define RECOVERY_STATIC_NETMASK          "255.255.255.0"
 #define RECOVERY_STATIC_GATEWAY          "0.0.0.0"
-#define RECOVERY_DHCP_CLIENT_IPADDR      "192.168.255.2"
-#define RECOVERY_DHCP_BROADCAST_IPADDR   "192.168.255.255"
+#define RECOVERY_DHCP_CLIENT_IPADDR      "192.168.1.2"
+#define RECOVERY_DHCP_BROADCAST_IPADDR   "192.168.1.255"
 #define RECOVERY_DHCP_LEASE_SECS         86400U
 #define RECOVERY_DHCP_MAX_MSG_LEN        1500
 #define RECOVERY_LED_PORTS     2
