@@ -3572,8 +3572,8 @@ static int airoha_mdio_c22_mmd_write(struct airoha_eth *eth, int addr, int devad
 	return airoha_mdio_c22_write(eth, addr, MII_MMD_DATA, val);
 }
 
-static void airoha_eth_gdm4_set_speed_mode(struct airoha_eth *eth, u32 mode,
-					   u32 rate_adapt)
+static void __maybe_unused
+airoha_eth_gdm4_set_speed_mode(struct airoha_eth *eth, u32 mode, u32 rate_adapt)
 {
 	airoha_rmw(eth->eth_pcs_usxgmii, PCS_USXGMII_PCS_AN_CONTROL_7,
 		   PCS_USXGMII_RATE_UPDATE_MODE | PCS_USXGMII_MODE,
@@ -4056,8 +4056,8 @@ static int airoha_rtl8261_serdes_mode_usxgmii_set(struct airoha_eth *eth,
 	return airoha_rtl8261_vend1_modify(eth, phy_addr, 0x02a2, BIT(7), 0x0);
 }
 
-static int airoha_rtl8261_serdes_mode_10gr_set(struct airoha_eth *eth,
-					       int phy_addr)
+static int __maybe_unused
+airoha_rtl8261_serdes_mode_10gr_set(struct airoha_eth *eth, int phy_addr)
 {
 	int ret;
 
@@ -4078,8 +4078,8 @@ static int airoha_rtl8261_serdes_mode_10gr_set(struct airoha_eth *eth,
 	return airoha_rtl8261_vend1_modify(eth, phy_addr, 0x02a2, BIT(7), 0x0);
 }
 
-static int airoha_rtl8261_serdes_mode_5gr_set(struct airoha_eth *eth,
-					      int phy_addr)
+static int __maybe_unused
+airoha_rtl8261_serdes_mode_5gr_set(struct airoha_eth *eth, int phy_addr)
 {
 	int ret;
 
@@ -4105,8 +4105,8 @@ static int airoha_rtl8261_serdes_mode_5gr_set(struct airoha_eth *eth,
 	return airoha_rtl8261_vend1_modify(eth, phy_addr, 0x02a2, BIT(7), 0x0);
 }
 
-static int airoha_rtl8261_serdes_mode_2p5gx_set(struct airoha_eth *eth,
-						int phy_addr)
+static int __maybe_unused
+airoha_rtl8261_serdes_mode_2p5gx_set(struct airoha_eth *eth, int phy_addr)
 {
 	int ret;
 
@@ -4132,8 +4132,8 @@ static int airoha_rtl8261_serdes_mode_2p5gx_set(struct airoha_eth *eth,
 	return airoha_rtl8261_vend1_modify(eth, phy_addr, 0x02a2, BIT(7), 0x0);
 }
 
-static int airoha_rtl8261_serdes_mode_sgmii_set(struct airoha_eth *eth,
-						int phy_addr)
+static int __maybe_unused
+airoha_rtl8261_serdes_mode_sgmii_set(struct airoha_eth *eth, int phy_addr)
 {
 	int ret;
 
@@ -4930,7 +4930,8 @@ static void airoha_eth_gdm4_diag(struct airoha_eth *eth, const char *tag,
 		airoha_qdma_dump_rx_window(tag, 1, &eth->qdma[1].q_rx[0]);
 }
 
-static int airoha_rtl8261_intr_init(struct airoha_eth *eth, int phy_addr)
+static int __maybe_unused
+airoha_rtl8261_intr_init(struct airoha_eth *eth, int phy_addr)
 {
 	int ret;
 
@@ -4973,7 +4974,8 @@ static int airoha_rtl8261_intr_init(struct airoha_eth *eth, int phy_addr)
 	return airoha_rtl8261_phy_modify(eth, phy_addr, 0xa42, 4, 7, 7, 0x1);
 }
 
-static int airoha_rtl8261_macsec_init(struct airoha_eth *eth, int phy_addr)
+static int __maybe_unused
+airoha_rtl8261_macsec_init(struct airoha_eth *eth, int phy_addr)
 {
 	int ret;
 
@@ -5058,7 +5060,8 @@ static int airoha_rtl8261_serdes_autoneg_set(struct airoha_eth *eth, int phy_add
 				     RTL8261_PHY_SERDES_OP_CTRL, 0x0003);
 }
 
-static int airoha_rtl8261_phy_reset(struct airoha_eth *eth, int phy_addr)
+static int __maybe_unused
+airoha_rtl8261_phy_reset(struct airoha_eth *eth, int phy_addr)
 {
 	int ctrl, ret;
 	u32 timeout = 500;
